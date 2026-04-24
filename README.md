@@ -2,6 +2,8 @@
 
 A quick in-and-out terminal note-taking app. fzf-style list with live preview, markdown rendering, and a one-shot mode for when you just need to jot something down before you forget.
 
+![screenshot](screenshot.png)
+
 ## What it does
 
 Keeps a pile of small markdown notes in a per-OS config directory and gives you a keyboard-driven TUI to browse, search, preview, and manage them. Notes are plain `.md` files sorted by modification time, so the most recent is always under the cursor when you open the app. The preview pane renders markdown through [glamour](https://github.com/charmbracelet/glamour), code blocks and all.
