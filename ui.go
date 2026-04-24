@@ -318,63 +318,79 @@ func (m model) viewList() string {
 	if leftWidth > 55 {
 		leftWidth = 55
 	}
-	rightWidth := m.width - leftWidth - 3
+	// layout: [left]  │ [right]
+	const gutter = 4 // " " + "│" + " " + safety
+	rightWidth := m.width - leftWidth - gutter
 	if rightWidth < 10 {
 		rightWidth = 10
 	}
-	bodyHeight := m.height - 2 // reserve 2 lines for bottom bar
+	bodyHeight := m.height - 2
 	if bodyHeight < 3 {
 		bodyHeight = 3
 	}
 
-	// left list, scroll so cursor stays visible
+	// scroll so cursor stays visible
 	scroll := 0
 	if m.cursor >= bodyHeight {
 		scroll = m.cursor - bodyHeight + 1
 	}
-	var left strings.Builder
-	rows := 0
-	for i := scroll; i < len(m.filtered) && rows < bodyHeight; i++ {
+
+	// LEFT column — each row pre-padded to leftWidth visible chars.
+	leftLines := make([]string, 0, bodyHeight)
+	for i := scroll; i < len(m.filtered) && len(leftLines) < bodyHeight; i++ {
 		n := m.notes[m.filtered[i]]
 		date := n.mtime.Format("02/01/06")
-		// 2 gutter + 9 date + 1 space = 12 chars before the label
-		label := truncate(firstMeaningfulLine(n.content), leftWidth-12)
+		label := truncate(firstMeaningfulLine(n.content), leftWidth-11)
 		if i == m.cursor {
-			row := "▸ " + styleSubtle.Render(date) + " " + label
-			left.WriteString(styleSelected.Width(leftWidth).Render(row))
+			raw := "▸ " + date + " " + label
+			leftLines = append(leftLines, styleSelected.Render(padToWidth(raw, leftWidth)))
 		} else {
-			left.WriteString("  " + styleSubtle.Render(date) + " " + label)
+			raw := "  " + styleSubtle.Render(date) + " " + label
+			leftLines = append(leftLines, padToWidth(raw, leftWidth))
 		}
-		left.WriteString("\n")
-		rows++
 	}
-	for rows < bodyHeight {
-		left.WriteString("\n")
-		rows++
+	for len(leftLines) < bodyHeight {
+		leftLines = append(leftLines, strings.Repeat(" ", leftWidth))
 	}
 
-	// right preview
-	var right strings.Builder
+	// RIGHT column
+	rightLines := make([]string, 0, bodyHeight)
 	if n, ok := m.selected(); ok {
-		right.WriteString(styleSubtle.Render(filepath.Base(n.path)) + "\n")
-		right.WriteString(styleDivider.Render(strings.Repeat("─", rightWidth)) + "\n")
-		lines := strings.Split(n.content, "\n")
-		remaining := bodyHeight - 2
-		for _, line := range lines {
-			if remaining <= 0 {
+		rightLines = append(rightLines, truncate(styleSubtle.Render(filepath.Base(n.path)), rightWidth))
+		rightLines = append(rightLines, styleDivider.Render(strings.Repeat("─", rightWidth)))
+		for _, line := range strings.Split(n.content, "\n") {
+			if len(rightLines) >= bodyHeight {
 				break
 			}
-			right.WriteString(truncate(line, rightWidth) + "\n")
-			remaining--
+			rightLines = append(rightLines, truncate(line, rightWidth))
 		}
 	}
+	for len(rightLines) < bodyHeight {
+		rightLines = append(rightLines, "")
+	}
 
-	leftBox := lipgloss.NewStyle().Width(leftWidth).Height(bodyHeight).Render(left.String())
-	divider := lipgloss.NewStyle().Height(bodyHeight).Render(styleDivider.Render(strings.Repeat("│\n", bodyHeight)))
-	rightBox := lipgloss.NewStyle().Width(rightWidth).Height(bodyHeight).PaddingLeft(1).Render(right.String())
+	// DIVIDER column — one "│" per row.
+	divLines := make([]string, bodyHeight)
+	bar := styleDivider.Render("│")
+	for i := range divLines {
+		divLines[i] = bar
+	}
 
-	top := lipgloss.JoinHorizontal(lipgloss.Top, leftBox, divider, rightBox)
+	top := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		strings.Join(leftLines, "\n"),
+		" "+strings.Join(divLines, "\n "), // leading space on each row
+		" "+strings.Join(rightLines, "\n "),
+	)
 	return top + "\n" + m.bottomBar(leftWidth)
+}
+
+func padToWidth(s string, w int) string {
+	vw := lipgloss.Width(s)
+	if vw >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-vw)
 }
 
 func (m model) viewExpanded() string {
@@ -426,7 +442,14 @@ func (m model) bottomBar(leftWidth int) string {
 			styleSubtle.Render("enter save · esc cancel · ~ and relative paths ok")
 	}
 
-	count := styleSubtle.Render(fmt.Sprintf("%d/%d", len(m.filtered), len(m.notes)))
+	var count string
+	if len(m.filtered) == 0 {
+		count = styleSubtle.Render(fmt.Sprintf("0 of %d", len(m.notes)))
+	} else if m.search != "" {
+		count = styleSubtle.Render(fmt.Sprintf("%d of %d match", m.cursor+1, len(m.filtered)))
+	} else {
+		count = styleSubtle.Render(fmt.Sprintf("%d of %d", m.cursor+1, len(m.notes)))
+	}
 	var line1 string
 	switch {
 	case m.status != "" && m.statusErr:
