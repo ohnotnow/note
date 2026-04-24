@@ -9,8 +9,37 @@ import (
 
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// renderCache is keyed on path+mtime+width. Bounded-ish: one entry per
+// (note, viewport width) combination, which in normal use is a handful.
+var renderCache = map[string]string{}
+
+func renderMarkdown(n note, width int) string {
+	if width < 20 {
+		width = 20
+	}
+	key := fmt.Sprintf("%s|%d|%d", n.path, n.mtime.UnixNano(), width)
+	if s, ok := renderCache[key]; ok {
+		return s
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dracula"),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return n.content
+	}
+	out, err := r.Render(n.content)
+	if err != nil {
+		return n.content
+	}
+	out = strings.TrimRight(out, "\n")
+	renderCache[key] = out
+	return out
+}
 
 type mode int
 
@@ -390,16 +419,16 @@ func (m model) viewList() string {
 		leftLines = append(leftLines, strings.Repeat(" ", leftWidth))
 	}
 
-	// RIGHT column
+	// RIGHT column — glamour-rendered markdown, trust its word-wrap.
 	rightLines := make([]string, 0, bodyHeight)
 	if n, ok := m.selected(); ok {
 		rightLines = append(rightLines, truncate(styleSubtle.Render(filepath.Base(n.path)), rightWidth))
-		rightLines = append(rightLines, styleDivider.Render(strings.Repeat("─", rightWidth)))
-		for _, line := range strings.Split(n.content, "\n") {
+		rendered := renderMarkdown(n, rightWidth-2)
+		for _, line := range strings.Split(rendered, "\n") {
 			if len(rightLines) >= bodyHeight {
 				break
 			}
-			rightLines = append(rightLines, truncate(line, rightWidth))
+			rightLines = append(rightLines, line)
 		}
 	}
 	for len(rightLines) < bodyHeight {
@@ -439,7 +468,8 @@ func (m model) viewExpanded() string {
 	}
 	bodyHeight := m.height - 2
 	header := styleTitle.Render(filepath.Base(n.path))
-	lines := strings.Split(n.content, "\n")
+	rendered := renderMarkdown(n, m.width-2)
+	lines := strings.Split(rendered, "\n")
 
 	if m.expandedScroll > len(lines)-1 {
 		m.expandedScroll = maxInt(0, len(lines)-1)
