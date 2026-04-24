@@ -19,6 +19,7 @@ const (
 	modeSearch
 	modeExpanded
 	modeExport
+	modeConfirmDelete
 )
 
 var (
@@ -94,15 +95,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case editorFinishedMsg:
+		m.cursor = 0
 		return m, reloadNotesCmd(m.store)
 	case notesReloadedMsg:
 		if msg.err != nil {
 			m.setStatus("reload failed: "+msg.err.Error(), true)
-		} else {
-			m.notes = msg.notes
+			return m, nil
+		}
+		m.notes = msg.notes
+		m.applyFilter()
+		if m.cursor >= len(m.filtered) {
+			m.cursor = len(m.filtered) - 1
+		}
+		if m.cursor < 0 {
 			m.cursor = 0
-			m.applyFilter()
-			m.setStatus(fmt.Sprintf("%d notes loaded", len(m.notes)), false)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -117,6 +123,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateExpanded(msg)
 		case modeExport:
 			return m.updateExport(msg)
+		case modeConfirmDelete:
+			return m.updateConfirmDelete(msg)
 		}
 	}
 	return m, nil
@@ -178,6 +186,10 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		return m, openEditorCmd(m.store.newPath())
+	case "d", "backspace":
+		if _, ok := m.selected(); ok {
+			m.mode = modeConfirmDelete
+		}
 	case "/":
 		m.mode = modeSearch
 	case "esc":
@@ -252,6 +264,31 @@ func (m model) updateExpanded(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("copied to clipboard", false)
 			}
 		}
+	}
+	return m, nil
+}
+
+func (m model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "n", "N", "esc":
+		m.mode = modeList
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	case "y", "Y", "enter", " ":
+		n, ok := m.selected()
+		if !ok {
+			m.mode = modeList
+			return m, nil
+		}
+		if err := os.Remove(n.path); err != nil {
+			m.setStatus("delete failed: "+err.Error(), true)
+			m.mode = modeList
+			return m, nil
+		}
+		m.setStatus("deleted "+filepath.Base(n.path), false)
+		m.mode = modeList
+		return m, reloadNotesCmd(m.store)
 	}
 	return m, nil
 }
@@ -440,6 +477,14 @@ func (m model) bottomBar(leftWidth int) string {
 	case modeExport:
 		return styleTitle.Render("export to: ") + m.export + "▌\n" +
 			styleSubtle.Render("enter save · esc cancel · ~ and relative paths ok")
+	case modeConfirmDelete:
+		preview := "(note)"
+		if n, ok := m.selected(); ok {
+			preview = truncate(firstMeaningfulLine(n.content), 40)
+		}
+		return styleError.Render("delete ") + "\"" + preview + "\"" + styleError.Render("?") +
+			styleSubtle.Render("  [") + styleTitle.Render("Y") + styleSubtle.Render("/n]") + "\n" +
+			styleSubtle.Render("enter/y confirm · n/esc cancel")
 	}
 
 	var count string
@@ -461,7 +506,7 @@ func (m model) bottomBar(leftWidth int) string {
 	default:
 		line1 = count
 	}
-	line2 := styleSubtle.Render("↑↓ nav · enter preview · n new · c copy · e export · / search · q quit")
+	line2 := styleSubtle.Render("↑↓ nav · enter preview · n new · c copy · e export · d delete · / search · q quit")
 	return line1 + "\n" + line2
 }
 
